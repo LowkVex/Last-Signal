@@ -78,6 +78,7 @@ function buildStubs(win) {
       shake: spy(), respawn: spy(), triggerHandAnim: spy(), startDeath: spy(), toggleFlashlight() {}, useBattery() {}, look() {},
     },
     inv: { items: [], add: spy(), remove: spy(), count: () => 0, has: () => false, serialize: () => [] },
+    input: { forward: false, back: false, left: false, right: false, sprint: false, crouch: false, lookLeft: false, lookRight: false, use: false },
     bus: { on: spy(), emit: spy() },
     noise: spy(),
     debug: { godMode: false },
@@ -196,7 +197,7 @@ async function boot() {
     const $ = (id) => win.document.getElementById(id);
     for (const id of ['mpBtn', 'mpSignInBtn', 'mpSignUpBtn', 'mpAuthBack', 'mpDevBtn', 'mpCreateBtn',
       'mpJoinBtn', 'mpRefreshBtn', 'mpHubBack', 'mpSignOutBtn', 'mpServerBtn', 'mpCopyCode',
-      'mpReadyBtn', 'mpStartBtn', 'mpLeaveBtn', 'mpMicBtn', 'mpDownedBtn']) {
+      'mpReadyBtn', 'mpStartBtn', 'mpLeaveBtn', 'mpMicBtn', 'mpDownedBtn', 'mpChatSend']) {
       const el = $(id);
       assert.ok(el, 'missing #' + id);
       assert.strictEqual(typeof el.onclick, 'function', id + ' has no click handler');
@@ -334,6 +335,122 @@ async function boot() {
     win.dispatchEvent(new win.KeyboardEvent('keydown', { code: 'KeyM', bubbles: true }));
     await new Promise((r) => setTimeout(r, 30));
     assert.match(win.document.getElementById('mpMicChip').textContent, /VOICE UNSUPPORTED|MIC/);
+  });
+
+  /* ===== text chat + emotes ===== */
+
+  await test('chat feed renders name, timestamp, escaped text and sys lines (both feeds)', async () => {
+    const { win } = ctx;
+    const $ = (id) => win.document.getElementById(id);
+    $('mpChatFeed').innerHTML = ''; $('mpChatHud').innerHTML = '';
+    const ts = Date.now();
+    win.MP.UI.onChatMessage({ from: 'p2', name: 'HICKS', text: 'meet at the <b>radio</b>', ts });
+    const line = $('mpChatFeed').lastElementChild;
+    assert.strictEqual(line.querySelector('.mp-chat-name').textContent, 'HICKS:');
+    assert.strictEqual(line.querySelector('.mp-chat-text').textContent, 'meet at the <b>radio</b>');
+    assert.ok($('mpChatFeed').innerHTML.includes('&lt;b&gt;'), 'user text must be escaped in the DOM');
+    assert.match(line.querySelector('.mp-chat-ts').textContent, /^\d{2}:\d{2}$/, 'timestamp rendered');
+    assert.strictEqual($('mpChatHud').children.length, 1, 'in-match feed mirrors the message');
+    win.MP.UI.onChatMessage({ sys: true, text: 'GHOST joined the expedition.', ts });
+    const sys = $('mpChatFeed').lastElementChild;
+    assert.ok(sys.classList.contains('sys'), 'system line styled');
+    assert.strictEqual(sys.querySelector('.mp-chat-name'), null, 'system lines have no sender');
+  });
+
+  await test('chat feed caps stored history', async () => {
+    const { win } = ctx;
+    const feed = win.document.getElementById('mpChatFeed');
+    for (let i = 0; i < 70; i++) win.MP.UI.onChatMessage({ from: 'p2', name: 'X', text: 'line ' + i, ts: Date.now() });
+    assert.ok(feed.children.length <= 60, 'lobby feed capped, got ' + feed.children.length);
+    assert.match(feed.lastElementChild.textContent, /line 69/);
+  });
+
+  await test('in-match virtual keyboard: T opens, game keys suppressed, Enter sends, Esc cancels', async () => {
+    const { win } = ctx;
+    const $ = (id) => win.document.getElementById(id);
+    const MP = win.MP;
+    MP.active = true; MP.inRoom = true; MP.playerId = 'p1'; MP.members = [{ id: 'p1', name: 'RIPLEY' }];
+    win.G.state.scene = 'play'; win.G.player.dead = false; MP.Game.iAmDowned = false;
+
+    let gameSawKeys = 0;
+    win.addEventListener('keydown', () => gameSawKeys++);   // stands in for the game's window handler
+
+    const sent = [];
+    const origSend = MP.Net.sendChat;
+    MP.Net.sendChat = (t, cb) => { sent.push(t); cb && cb({ ok: true }); };
+
+    // T opens the chat bar and releases held movement keys
+    win.G.input.forward = true; win.G.input.sprint = true;
+    win.document.body.dispatchEvent(new win.KeyboardEvent('keydown', { code: 'KeyT', key: 't', bubbles: true }));
+    assert.ok(!$('mpChatBar').classList.contains('hidden'), 'chat bar visible after T');
+    assert.strictEqual(MP.UI.chat.open, true);
+    assert.strictEqual(win.G.input.forward, false, 'opening chat must release held keys');
+    assert.strictEqual(win.G.input.sprint, false);
+
+    // keystrokes go to the draft — the game's window handler must NOT see them
+    const keysBefore = gameSawKeys;
+    for (const ch of ['h', 'e', 'l', 'l', 'o', ' ', 'y', 'o', 'u']) {
+      win.document.body.dispatchEvent(new win.KeyboardEvent('keydown', { key: ch, bubbles: true }));
+    }
+    win.document.body.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Backspace', bubbles: true }));
+    assert.strictEqual(MP.UI.chat.draft, 'hello yo');
+    assert.strictEqual($('mpChatDraft').textContent, 'hello yo');
+    assert.strictEqual(gameSawKeys, keysBefore, 'capture handler must swallow every key while chat is open');
+
+    // Enter sends and closes
+    win.document.body.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    assert.deepStrictEqual(sent, ['hello yo']);
+    assert.ok($('mpChatBar').classList.contains('hidden'), 'bar closes after send');
+    assert.strictEqual(MP.UI.chat.open, false);
+
+    // Escape cancels without sending
+    win.MP.UI.openChat();
+    win.document.body.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'x', bubbles: true }));
+    win.document.body.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    assert.strictEqual(sent.length, 1, 'Esc must not send');
+    assert.ok($('mpChatBar').classList.contains('hidden'));
+
+    // no chat outside a room
+    MP.inRoom = false;
+    win.MP.UI.openChat();
+    assert.strictEqual(MP.UI.chat.open, false, 'chat requires room membership');
+    MP.inRoom = true;
+
+    MP.Net.sendChat = origSend;
+    MP.active = false; MP.inRoom = false;
+  });
+
+  await test('emote events drive the Remote rig and print readable lines', async () => {
+    const { win } = ctx;
+    const MP = win.MP;
+    const $ = (id) => win.document.getElementById(id);
+    MP.playerId = 'p1';
+    MP.members = [{ id: 'p1', name: 'RIPLEY' }, { id: 'p2', name: 'HICKS' }];
+    let emoted = null;
+    const origPlay = MP.Remote.playEmote;
+    MP.Remote.playEmote = (pid, e) => { emoted = [pid, e]; };
+    MP.UI.onEmote({ player: 'p2', emote: 'wave', ts: Date.now() });
+    assert.deepStrictEqual(emoted, ['p2', 'wave'], 'emote routed to the remote rig');
+    assert.match($('mpChatFeed').lastElementChild.textContent, /HICKS waves/);
+    MP.UI.onEmote({ player: 'p1', emote: 'no', ts: Date.now() });
+    assert.match($('mpChatFeed').lastElementChild.textContent, /You shake your head/);
+    MP.UI.onEmote({ player: 'p9', emote: 'bogus' });        // stale/unknown: no crash
+    MP.UI.onEmote(null);
+    MP.Remote.playEmote = origPlay;
+  });
+
+  await test('sendChatLine sanitizes, truncates and refuses empty messages', async () => {
+    const { win } = ctx;
+    const sent = [];
+    const orig = win.MP.Net.sendChat;
+    win.MP.Net.sendChat = (t, cb) => { sent.push(t); cb && cb({ ok: true }); };
+    win.MP.UI.sendChatLine('  he\u0000y   there  ');
+    win.MP.UI.sendChatLine('   ');
+    win.MP.UI.sendChatLine('x'.repeat(300));
+    assert.strictEqual(sent[0], 'he y there', 'control chars -> space, whitespace collapsed');
+    assert.strictEqual(sent.length, 2, 'empty line never hits the network');
+    assert.strictEqual(sent[1].length, 200, 'client-side hard cap matches the server');
+    win.MP.Net.sendChat = orig;
   });
 
   /* ===== the authoritative-event dispatcher ===== */

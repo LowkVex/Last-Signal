@@ -554,6 +554,27 @@ select.mp-input:disabled { opacity: 0.45; cursor: default; }
 .mp-downed-hint { margin-top: 22px; font-size: 9.5px; letter-spacing: 3px; color: #5f4a44; }
 #mpDownedBtn { width: 300px; margin: 26px auto 0; text-align: center; }
 
+/* ---- multiplayer: text chat ---- */
+.mp-chat-box { margin: 10px 0 2px; border: 1px solid #2c3a2e; background: rgba(6,10,7,0.55); }
+.mp-chat-feed { height: 108px; overflow-y: auto; padding: 6px 8px; font-size: 11.5px; line-height: 1.55; scrollbar-width: thin; scrollbar-color: #33462f #0a0f0b; }
+.mp-chat-inputrow { display: flex; gap: 6px; padding: 6px; border-top: 1px solid #22301f; }
+.mp-chat-inputrow input { flex: 1; min-width: 0; background: #0a0f0b; border: 1px solid #33462f; color: #cfe0c8; font-family: inherit; font-size: 11.5px; letter-spacing: 1px; padding: 7px 9px; outline: none; }
+.mp-chat-inputrow input:focus { border-color: #5d7a52; }
+.mp-chat-send { flex: 0 0 auto; padding: 6px 14px !important; font-size: 10px !important; margin: 0 !important; }
+.mp-chat-line { transition: opacity 0.6s; }
+.mp-chat-line.fade { opacity: 0; }
+.mp-chat-ts { color: #5c6b58; margin-right: 6px; font-size: 9.5px; }
+.mp-chat-name { color: #c9a24b; margin-right: 6px; }
+.mp-chat-text { color: #c6d4bf; word-break: break-word; }
+.mp-chat-line.sys .mp-chat-text { color: #7d8a78; font-style: italic; }
+.mp-chat-hud { position: fixed; left: 18px; bottom: 104px; width: min(430px, 44vw); z-index: 42; display: flex; flex-direction: column; gap: 2px; pointer-events: none; }
+.mp-chat-hud .mp-chat-line { background: rgba(4,7,4,0.55); padding: 2px 8px; font-size: 12px; line-height: 1.5; text-shadow: 0 1px 2px #000; }
+.mp-chat-bar { position: fixed; left: 50%; bottom: 13vh; transform: translateX(-50%); z-index: 60; background: rgba(6,10,7,0.94); border: 1px solid #5d7a52; color: #d8e6d0; font-size: 14px; letter-spacing: 1.5px; padding: 9px 18px; width: min(560px, 84vw); box-shadow: 0 0 24px rgba(0,0,0,0.7); }
+#mpChatDraft { color: #eaf2e2; }
+.mp-chat-caret { color: #bfe8b4; animation: mpBlink 1s steps(1) infinite; }
+@keyframes mpBlink { 50% { opacity: 0; } }
+.mp-chat-barhint { float: right; font-size: 9px; letter-spacing: 2px; color: #5c6b58; margin-top: 4px; }
+
 </style>
 </head>
 <body>
@@ -870,6 +891,13 @@ select.mp-input:disabled { opacity: 0.45; cursor: default; }
       <div class="mp-room-info"><span id="mpRoomCampaign">CHAPTER 1</span><span id="mpRoomCount">0 / 6 SURVIVORS</span></div>
       <div id="mpRoomPlayers"></div>
       <div class="mp-room-info"><span id="mpRoomPhase">LOBBY — WAITING FOR SURVIVORS</span></div>
+      <div class="mp-chat-box">
+        <div id="mpChatFeed" class="mp-chat-feed"></div>
+        <div class="mp-chat-inputrow">
+          <input id="mpChatInput" type="text" maxlength="200" placeholder="MESSAGE THE ROOM…  /wave /point /yes /no" autocomplete="off" spellcheck="false">
+          <button class="mbtn mp-chat-send" id="mpChatSend">SEND</button>
+        </div>
+      </div>
       <div class="mp-two">
         <button class="mbtn" id="mpReadyBtn" style="text-align:center">READY</button>
         <button class="mbtn hidden" id="mpStartBtn" style="text-align:center">START DESCENT</button>
@@ -892,6 +920,10 @@ select.mp-input:disabled { opacity: 0.45; cursor: default; }
     <span id="mpMicChip" class="mp-micchip off">MIC OFF [M]</span>
     <span id="mpMicMsg" class="mp-status"></span>
   </div>
+
+  <!-- MULTIPLAYER · CHAT (in-match) -->
+  <div id="mpChatHud" class="hidden"></div>
+  <div id="mpChatBar" class="hidden">SAY: <span id="mpChatDraft"></span><span class="mp-chat-caret">▌</span><span class="mp-chat-barhint">ENTER send · ESC close</span></div>
 
   <!-- MULTIPLAYER · DOWNED -->
   <div id="mpDowned" class="hidden">

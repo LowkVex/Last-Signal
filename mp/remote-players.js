@@ -34,14 +34,14 @@
     const cv = document.createElement('canvas');
     cv.width = 256; cv.height = 64;
     const ctx = cv.getContext('2d');
-    const spr = { cv, ctx, name, accent, texture: null, sprite: null, dirty: true, speaking: false, status: '' };
+    const spr = { cv, ctx, name, accent, texture: null, sprite: null, dirty: true, speaking: false, status: '', bubble: '' };
     function redraw() {
       const c = spr.ctx;
       c.clearRect(0, 0, 256, 64);
       c.font = 'bold 22px "Courier New", monospace';
       c.textAlign = 'center';
       c.textBaseline = 'middle';
-      const label = (spr.status ? spr.status + ' ' : '') + spr.name;
+      const label = (spr.bubble ? spr.bubble + ' ' : '') + (spr.status ? spr.status + ' ' : '') + spr.name;
       c.shadowColor = '#000'; c.shadowBlur = 6;
       c.fillStyle = spr.speaking ? '#bfe8c4' : (spr.status === 'DOWN' ? '#c66' : '#9fb09a');
       c.fillText(label.slice(0, 22), 128, 30);
@@ -148,6 +148,7 @@
       draw: { x: 0, y: 0, z: 0, yaw: 0 },
       phase: Math.random() * 6, speed: 0, lastPos: null,
       crouch: false, hidden: false, downed: false, flash: false, moving: false,
+      emote: null, emoteT: 0,
       stepAcc: 0, noiseAcc: 0,
     };
     R.players.set(pid, e);
@@ -275,6 +276,29 @@
           rig.torso.rotation.y = Math.sin(e.phase) * sw * 0.12;
           rig.torso.position.y = 0.88 + Math.abs(Math.sin(e.phase)) * (spd > 0.4 ? 0.03 : 0.006);
           rig.head.rotation.y = Math.sin(now / 1700 + e.phase * 0.1) * 0.12;
+          // emote override (right arm / head) — plays over the walk cycle
+          if (e.emoteT > 0) {
+            e.emoteT -= dt;
+            if (e.emote === 'wave') {
+              rig.armR.sh.rotation.x = -2.35;
+              rig.armR.sh.rotation.z = -0.3 + Math.sin(now / 95) * 0.35;
+              rig.armR.el.rotation.x = -0.45;
+            } else if (e.emote === 'point') {
+              rig.armR.sh.rotation.x = -1.4;
+              rig.armR.sh.rotation.z = 0;
+              rig.armR.el.rotation.x = -0.05;
+            } else if (e.emote === 'yes') {
+              rig.head.rotation.x = Math.sin(now / 130) * 0.4;
+            } else if (e.emote === 'no') {
+              rig.head.rotation.y = Math.sin(now / 115) * 0.65;
+            }
+            if (e.emoteT <= 0) {
+              e.emote = null;
+              rig.armR.sh.rotation.z = 0;
+              rig.head.rotation.x = 0;
+              if (e.tag && e.tag.bubble) { e.tag.bubble = ''; e.tag.redraw(); }
+            }
+          }
           // headlamp
           const wantI = e.flash ? 1.15 : 0;
           rig.light.intensity += (wantI - rig.light.intensity) * Math.min(1, dt * 6);
@@ -338,6 +362,19 @@
   R.setSpeaking = function (pid, speaking) {
     const e = R.players.get(pid);
     if (e && e.tag.speaking !== speaking) { e.tag.speaking = speaking; e.tag.redraw(); }
+  };
+
+  const EMOTE_S = { wave: 2.2, point: 2.0, yes: 1.6, no: 1.6 };
+  const EMOTE_TAG = { wave: '👋', point: '👉', yes: '✔', no: '✖' };
+
+  /** server-relayed emote: bubble over the name tag + body animation */
+  R.playEmote = function (pid, emote) {
+    const e = R.players.get(pid);
+    if (!e || !EMOTE_S[emote]) return;
+    e.emote = emote;
+    e.emoteT = EMOTE_S[emote];
+    const b = EMOTE_TAG[emote] || '';
+    if (e.tag && e.tag.bubble !== b) { e.tag.bubble = b; e.tag.redraw(); }
   };
 
   R.updateNames = function () {

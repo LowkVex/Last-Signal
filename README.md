@@ -194,9 +194,9 @@ appears in the hub; capacity is enforced at 6 — the 7th join is rejected).
 
 ```bash
 cd LAST-SIGNAL/server
-npm test            # both suites (55 tests)
-npm run test:server # 34 live socket integration tests only
-npm run test:client # 21 jsdom tests against the real index.html DOM only
+npm test            # both suites (61 tests)
+npm run test:server # 35 live socket integration tests only
+npm run test:client # 26 jsdom tests against the real index.html DOM only
 ```
 
 `test:server` spawns the **real server** (dev auth, short warm-up) and drives it
@@ -286,9 +286,18 @@ handler. See §8 for exactly what is covered.
 * In-match: original controls, plus
   * **M** — mute/unmute your microphone (mic chip bottom-left shows state),
   * **1–5** — mute/unmute individual teammates,
+  * **T** — text chat (typing bar appears; ENTER sends, ESC cancels — the game
+    never sees your keystrokes and pointer lock is never broken),
+  * **/wave** **/point** **/yes** **/no** — emotes: your survivor performs the
+    gesture (visible to everyone) with a bubble over their name tag,
   * **hold E** next to a downed teammate — revive (~3 s, progress shown to both),
   * team HUD top-right: names, ACTIVE/HIDDEN/DOWN/LOST SIGNAL, mic icons,
-    link latency and voice-peer count.
+    link latency and voice-peer count,
+  * chat feed bottom-left (fades after 12 s); join/reconnect/leave notices
+    appear there too.
+* In the room lobby there is a full **chat box** under the player list — same
+  relay, same server-side validation (identity from the server record, 200-char
+  cap, control chars stripped, 6 msgs/10 s rate limit, strict room isolation).
 * Getting caught **downs** you instead of ending the run — your team can revive
   you. If everyone goes down it's a **TEAM WIPE**: the host can
   **REWIND TO CHECKPOINT (ALL PLAYERS)** or abandon the expedition.
@@ -299,12 +308,12 @@ handler. See §8 for exactly what is covered.
 
 ---
 
-## 8. What was verified by the automated suite (`npm test`, 55/55 passing)
+## 8. What was verified by the automated suite (`npm test`, 61/61 passing)
 
 `npm test` (from `LAST-SIGNAL/` or `LAST-SIGNAL/server/`) runs two suites:
-`test:server` (34 live integration tests) and `test:client` (21 jsdom tests).
+`test:server` (35 live integration tests) and `test:client` (26 jsdom tests).
 
-### Server suite — 34/34, run against the real server over real sockets (dev-guest auth):
+### Server suite — 35/35, run against the real server over real sockets (dev-guest auth):
 
 * **auth** — connections without a token rejected; bogus/stolen tokens rejected;
   dev-guest handshake returns a stable player ID; welcome/protocol info correct.
@@ -334,8 +343,14 @@ handler. See §8 for exactly what is covered.
   host disconnect; leaving notifies player and room; latency probe acks.
 * **voice signaling** — `voice:hello` returns peers + ICE servers + TURN status;
   SDP relays to the addressed peer only; malformed payloads dropped.
+* **chat & emotes** — messages relay under the SERVER's identity record (a
+  client can never fake a name); room isolation proven (a second room receives
+  nothing); `/wave` relays as an emote event, not a chat line; unknown emotes
+  rejected; control chars stripped + whitespace collapsed; 200-char hard cap;
+  6-per-10s rate limiter trips on bursts; empty/non-string rejected; chatting
+  without a room rejected; mid-match reconnect posts a system notice to the room.
 
-### Client suite — 21/21, jsdom smoke tests against the REAL `index.html` DOM
+### Client suite — 26/26, jsdom smoke tests against the REAL `index.html` DOM
 (`server/test/client-modules.test.js`): loads the shipped page (scripts off),
 stubs the game namespaces, then `eval`s the real `shared/network-events.js` +
 `mp/*.js` in browser order and exercises:
@@ -357,7 +372,11 @@ stubs the game namespaces, then `eval`s the real `shared/network-events.js` +
   player_left/unknown events;
 * down/revive client handlers (approved-death gate, hidefail force-out,
   respawn at the server's coordinates) and offline intent paths
-  (one-shot dedupe + re-arm, refused-death recovery).
+  (one-shot dedupe + re-arm, refused-death recovery);
+* **chat UI** — feed renders sender/timestamp/escaped text (HTML in messages is
+  never parsed), history capped, the in-match virtual keyboard (T) suppresses
+  every game keybind while open, releases held movement keys, ENTER sends,
+  ESC cancels, emote events print readable lines and drive the remote rig.
 
 This suite caught two real integration bugs that static checks missed: a call
 to a nonexistent `UI.syncSettingsInputs` (cloud settings never reached the

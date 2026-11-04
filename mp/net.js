@@ -150,6 +150,10 @@
       N.socket.on(EV.GAME_TEAM_WIPE, () => MP.Game.onTeamWipe());
       N.socket.on(EV.GAME_REWIND, (d) => MP.Game.applyRewind(d));
 
+      // text chat + emotes (server-relayed, room-scoped)
+      N.socket.on(EV.CHAT_MSG, (d) => MP.UI && MP.UI.onChatMessage(d));
+      N.socket.on(EV.EMOTE, (d) => MP.UI && MP.UI.onEmote(d));
+
       // voice signaling passthrough
       N.socket.on(EV.VOICE_PEERS, (d) => MP.Voice && MP.Voice.onPeers(d));
       N.socket.on(EV.VOICE_SIGNAL, (d) => MP.Voice && MP.Voice.onSignal(d));
@@ -321,6 +325,11 @@
   N.sendDownRequest = function (target, reason, cb) { const s = requireSocket(); if (s) s.timeout(6000).emit(EV.GAME_DOWN_REQUEST, { target, reason }, (e, r) => cb && cb(e ? { ok: false } : r)); };
   N.sendReviveTick = function (target) { const s = requireSocket(); if (s) s.emit(EV.GAME_REVIVE_TICK, { target }); };
   N.sendRewindRequest = function () { const s = requireSocket(); if (s) s.emit(EV.GAME_REWIND_REQUEST, {}); };
+  N.sendChat = function (text, cb) {
+    const s = requireSocket();
+    if (!s) { cb && cb({ ok: false, error: 'offline' }); return; }
+    s.timeout(5000).emit(EV.CHAT_SEND, { text }, (e, r) => cb && cb(e ? { ok: false, error: 'timeout' } : (r || { ok: false })));
+  };
 
   N.emitRaw = function (ev, data) { const s = requireSocket(); if (s) s.emit(ev, data); };
   N.pingServerInfo = async function () {

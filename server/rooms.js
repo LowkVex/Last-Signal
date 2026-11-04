@@ -14,7 +14,7 @@
    ============================================================ */
 'use strict';
 
-const { EV, F, GE, MAX_PLAYERS, ROOM_PHASE, ERR } = require('../shared/network-events');
+const { EV, F, GE, MAX_PLAYERS, ROOM_PHASE, ERR, EMOTES } = require('../shared/network-events');
 const { GameState } = require('./game-state');
 const { sanitizeName } = require('./authentication');
 
@@ -292,6 +292,11 @@ class RoomManager {
     socket.join('player:' + playerId);
     socket.data.roomCode = room.code;
     room.pushState();
+    // join/reconnect notification for the room's chat feed (mid-match only —
+    // every entry path goes through attach(): create, join, and auto-reconnect)
+    if (room.state.phase === ROOM_PHASE.PLAYING) {
+      room.emit(EV.CHAT_MSG, { sys: true, text: `${member.name} ${resync ? 'reconnected to' : 'joined'} the expedition.`, ts: Date.now() });
+    }
     return resync;
   }
 
@@ -548,6 +553,44 @@ class RoomManager {
     if (!room) return;
     // relay to the sim host — the sim host's monster AI consumes the result
     this.toPlayer(room.simHostId, EV.SIM_SKILL_RESULT, { by: socket.data.playerId, success: !!success });
+  }
+
+  /* ---------------- text chat + emotes (room-scoped, validated) ---------------- */
+
+  onChat(socket, payload, ack) {
+    const respond = (r) => { if (typeof ack === 'function') ack(r); };
+    const room = this.roomOf(socket.data.playerId);
+    const member = room && room.members.get(socket.data.playerId);
+    if (!member) return respond({ ok: false, error: 'not in a room', code: ERR.ROOM_NOT_FOUND });
+
+    let text = payload && typeof payload.text === 'string' ? payload.text : '';
+    // strip control chars, collapse whitespace, hard length cap (clients render
+    // with textContent, but the transcript is also stored in DOM/log-able)
+    text = text.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+    if (!text) return respond({ ok: false, error: 'empty message', code: ERR.BAD_REQUEST });
+
+    // spam protection: sliding window — max 6 messages per 10s per member
+    const now = Date.now();
+    member._chatTimes = (member._chatTimes || []).filter((t) => now - t < 10000);
+    if (member._chatTimes.length >= 6) {
+      return respond({ ok: false, error: 'Too many messages — slow down.', code: ERR.RATE_LIMITED });
+    }
+    member._chatTimes.push(now);
+
+    // "/wave" & friends are emotes, not chat lines
+    const cmd = /^\/([a-z]+)$/i.exec(text);
+    if (cmd) {
+      const emote = cmd[1].toLowerCase();
+      if (!EMOTES.includes(emote)) {
+        return respond({ ok: false, error: `Unknown emote. Try: ${EMOTES.map((x) => '/' + x).join('  ')}`, code: ERR.BAD_REQUEST });
+      }
+      room.emit(EV.EMOTE, { player: member.playerId, emote, ts: now });
+      return respond({ ok: true, emote });
+    }
+
+    // identity is the SERVER's record — a client can never chat under another name
+    room.emit(EV.CHAT_MSG, { from: member.playerId, name: member.name, text, ts: now });
+    respond({ ok: true });
   }
 
   /* ---------------- supabase lobby mirror (best effort) ---------------- */

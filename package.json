@@ -1,28 +1,16 @@
 {
-  "name": "last-signal-server",
+  "name": "last-signal-multiplayer",
   "version": "1.0.0",
-  "description": "THE LAST SIGNAL — authoritative 6-player co-op horror game server (Socket.IO + Supabase auth + WebRTC voice signaling)",
-  "main": "server.js",
+  "private": true,
+  "description": "THE LAST SIGNAL — 6-player online co-op upgrade of the single-file horror game (Supabase accounts + authoritative Node/Socket.IO server + WebRTC proximity voice). The original single-player campaign is untouched.",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node --watch server.js",
-    "test": "node test/integration.test.js && node test/client-modules.test.js",
-    "test:server": "node test/integration.test.js",
-    "test:client": "node test/client-modules.test.js"
+    "install:server": "npm --prefix server install",
+    "start": "npm --prefix server start",
+    "dev": "npm --prefix server run dev",
+    "test": "npm --prefix server test"
   },
   "engines": {
     "node": ">=18.0.0"
   },
-  "dependencies": {
-    "dotenv": "^16.4.5",
-    "express": "^4.19.2",
-    "jose": "^5.9.6",
-    "socket.io": "^4.7.5"
-  },
-  "devDependencies": {
-    "jsdom": "^29.1.1",
-    "socket.io-client": "^4.8.4"
-  },
-  "license": "UNLICENSED",
-  "private": true
+  "license": "UNLICENSED"
 }

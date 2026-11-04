@@ -155,6 +155,7 @@ io.on('connection', (socket) => {
   /* ---- monster inspection relay + skill checks ---- */
   socket.on(EV.SIM_INSPECT, (p) => { try { roomManager.onSimInspect(socket, p || {}); } catch (e) { /* drop */ } });
   socket.on(EV.GAME_SKILL_RESULT, (p) => { try { roomManager.onSkillResult(socket, p || {}); } catch (e) { /* drop */ } });
+  socket.on(EV.CHAT_SEND, (p, ack) => { try { roomManager.onChat(socket, p || {}, ack); } catch (e) { safeAck(ack, () => ({ ok: false, error: String(e.message) })); } });
 
   /* ---- voice signaling ---- */
   attachVoiceSignaling(socket, roomManager);

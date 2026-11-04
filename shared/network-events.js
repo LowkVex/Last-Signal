@@ -71,6 +71,11 @@
     VOICE_STATE:        'voice:state',        // C->S / S->C  {mic:'on'|'off'|'muted', id?}
     VOICE_PEER_LEFT:    'voice:peer_left',    // S->C  {id}
     VOICE_ICE_REQUEST:  'voice:ice_request',  // C->S  ack {ok, iceServers}
+
+    // ---- text chat + emotes (room-scoped, server-relayed & validated) ----
+    CHAT_SEND:          'chat:send',          // C->S  {text}  ack {ok, error?}
+    CHAT_MSG:           'chat:message',       // S->C  {from, name, text, ts} or {sys:true, text, ts}
+    EMOTE:              'chat:emote',         // S->C  {player, emote}  (sent as "/wave" etc.)
   };
 
   // ---- movement flag bits (state:move "f" field) ----
@@ -120,6 +125,9 @@
 
   const ROOM_PHASE = { LOBBY: 'lobby', PLAYING: 'playing', ENDED: 'ended' };
 
+  // emote whitelist — chat "/name" commands the server accepts and relays
+  const EMOTES = ['wave', 'point', 'yes', 'no'];
+
   const ERR = {
     NOT_AUTHENTICATED: 'not_authenticated',
     BAD_TOKEN:         'bad_token',
@@ -135,5 +143,5 @@
     IN_GAME:           'in_game',
   };
 
-  return { PROTOCOL_VERSION, MAX_PLAYERS, EV, F, GE, CONN, ROOM_PHASE, ERR };
+  return { PROTOCOL_VERSION, MAX_PLAYERS, EV, F, GE, CONN, ROOM_PHASE, ERR, EMOTES };
 });

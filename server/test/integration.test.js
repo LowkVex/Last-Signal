@@ -601,6 +601,7 @@ async function run() {
       assert.ok(!m || m.connected === false || m.downed, 'dropped member should be flagged');
     }
     // same identity reconnects
+    const sysSeen = once(h, EV.CHAT_MSG, 5000).catch(() => null);
     const v2 = await guestWithId(gid, 'REC-DROPPER');
     assert.strictEqual(v2.playerId, gid, 'playerId must be stable across reconnects');
     const st = v2._early.roomState || await once(v2, EV.ROOM_STATE, 4000);
@@ -608,6 +609,8 @@ async function run() {
     const snap = v2._early.snapshot || await once(v2, EV.GAME_SNAPSHOT, 4000);
     assert.strictEqual(snap.state.phase, 'playing');
     assert.ok(snap.state.checkpoint !== undefined);
+    const sys = await sysSeen;
+    assert.ok(sys && sys.sys === true && /reconnected/.test(sys.text), 'room must be notified when a survivor reconnects mid-match');
     h.close(); v2.close();
   });
 
@@ -658,6 +661,86 @@ async function run() {
   });
 
   /* ===== ping + leave ===== */
+  await test('chat: server-identity relay, room isolation, emotes, sanitizing, rate limit', async () => {
+    const a = await guest('CHAT-A');
+    const b = await guest('CHAT-B');
+    const c = await guest('CHAT-C');
+    const cr = await ack(a, EV.ROOM_CREATE, { isPublic: false, campaign: 1 });
+    await ack(b, EV.ROOM_JOIN, { code: cr.code });
+    await ack(c, EV.ROOM_CREATE, { isPublic: false, campaign: 1 });   // c sits in a DIFFERENT room
+
+    // basic relay: B sees A's message under the SERVER-ASSIGNED identity
+    const msgSeen = once(b, EV.CHAT_MSG, 3000);
+    const r1 = await ack(a, EV.CHAT_SEND, { text: 'hello  from   a\u0000!' });
+    assert.strictEqual(r1.ok, true, JSON.stringify(r1));
+    const msg = await msgSeen;
+    assert.strictEqual(msg.from, a.playerId, 'identity must come from the server record');
+    assert.strictEqual(msg.name, 'CHAT-A');
+    assert.strictEqual(msg.text, 'hello from a !', 'control chars stripped, whitespace collapsed');
+    assert.ok(msg.ts > 0, 'server timestamp attached');
+
+    // the sender gets the same echo (single source of truth — no optimistic dupes)
+    const echoSeen = once(a, EV.CHAT_MSG, 3000);
+    await ack(a, EV.CHAT_SEND, { text: 'echo check' });
+    const echo = await echoSeen;
+    assert.strictEqual(echo.text, 'echo check');
+
+    // room isolation: C in another room must never see room 1's chat
+    let leaked = null;
+    c.on(EV.CHAT_MSG, (m) => { leaked = m; });
+    await ack(b, EV.CHAT_SEND, { text: 'private to room one' });
+    await sleep(300);
+    assert.strictEqual(leaked, null, 'chat must not cross room boundaries');
+    c.off(EV.CHAT_MSG);
+
+    // "/wave" is an emote, not a chat line
+    const emoteSeen = once(b, EV.EMOTE, 3000);
+    let chatDuringEmote = null;
+    b.on(EV.CHAT_MSG, (m) => { chatDuringEmote = m; });
+    const r2 = await ack(a, EV.CHAT_SEND, { text: '/WAVE' });
+    assert.strictEqual(r2.ok, true);
+    assert.strictEqual(r2.emote, 'wave');
+    const em = await emoteSeen;
+    assert.strictEqual(em.player, a.playerId);
+    assert.strictEqual(em.emote, 'wave');
+    await sleep(150);
+    assert.strictEqual(chatDuringEmote, null, 'emote must not produce a chat line');
+    b.off(EV.CHAT_MSG);
+
+    // unknown emote rejected with a helpful error
+    const r3 = await ack(a, EV.CHAT_SEND, { text: '/selfdestruct' });
+    assert.strictEqual(r3.ok, false);
+    assert.strictEqual(r3.code, NET.ERR.BAD_REQUEST);
+
+    // oversize input is hard-truncated to 200 chars
+    const bigSeen = once(b, EV.CHAT_MSG, 3000);
+    await ack(a, EV.CHAT_SEND, { text: 'x'.repeat(500) });
+    const big = await bigSeen;
+    assert.strictEqual(big.text.length, 200);
+
+    // empty / non-string rejected (and NOT counted toward the rate limit)
+    const r4 = await ack(a, EV.CHAT_SEND, { text: '   ' });
+    assert.strictEqual(r4.ok, false);
+    const r5 = await ack(a, EV.CHAT_SEND, { text: 42 });
+    assert.strictEqual(r5.ok, false);
+
+    // spam protection: sliding window of 6 / 10s — the burst must hit the wall
+    let limited = null;
+    for (let i = 0; i < 10; i++) {
+      const r = await ack(a, EV.CHAT_SEND, { text: 'spam ' + i });
+      if (!r.ok && r.code === NET.ERR.RATE_LIMITED) { limited = r; break; }
+    }
+    assert.ok(limited, 'burst of 10 must trip the rate limiter');
+
+    // no room => no chat
+    const loner = await guest('CHAT-LONER');
+    const r6 = await ack(loner, EV.CHAT_SEND, { text: 'anybody there?' });
+    assert.strictEqual(r6.ok, false);
+    assert.strictEqual(r6.code, NET.ERR.ROOM_NOT_FOUND);
+
+    a.close(); b.close(); c.close(); loner.close();
+  });
+
   await test('latency probe acks', async () => {
     const res = await ack(p1, 'net:ping2', {});
     assert.strictEqual(res.ok, true);

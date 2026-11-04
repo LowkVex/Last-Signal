@@ -76,6 +76,34 @@
     $('mpMicBtn').onclick = () => U.toggleMic();
     $('mpCampaignSel').onchange = (e) => MP.Net.setCampaign(parseInt(e.target.value, 10) || 1);
 
+    // lobby chat box (a real input — safe here: the game's key handler early-returns in menu scene)
+    const chatIn = $('mpChatInput'), chatBtn = $('mpChatSend');
+    if (chatBtn) chatBtn.onclick = () => { U.sendChatLine(chatIn.value); chatIn.value = ''; };
+    if (chatIn) {
+      chatIn.addEventListener('keydown', (e) => {
+        e.stopPropagation();                       // the game must never see lobby chat keystrokes
+        if (e.key === 'Enter') { U.sendChatLine(chatIn.value); chatIn.value = ''; }
+        else if (e.key === 'Escape') { chatIn.value = ''; chatIn.blur(); }
+      });
+    }
+    // in-match virtual keyboard: a CAPTURE-phase document listener swallows every
+    // key while the chat bar is open, so the game (window bubble listeners) never
+    // reacts — and pointer lock is never broken (no real input is focused)
+    document.addEventListener('keydown', (e) => {
+      if (!U.chat.open) return;
+      e.preventDefault(); e.stopPropagation();
+      if (e.key === 'Escape') { U.closeChat(); return; }
+      if (e.key === 'Enter') {
+        const t = U.chat.draft; U.chat.draft = ''; U.renderChatDraft();
+        U.sendChatLine(t); U.closeChat(); return;
+      }
+      if (e.key === 'Backspace') { U.chat.draft = U.chat.draft.slice(0, -1); U.renderChatDraft(); return; }
+      if (e.key && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        if (U.chat.draft.length < 200) U.chat.draft += e.key;
+        U.renderChatDraft();
+      }
+    }, true);
+
     // downed overlay buttons (team wipe uses the original death screen buttons, re-armed)
     const db = $('mpDownedBtn');
     if (db) db.onclick = () => { MP.Net.leaveRoom(); };
@@ -85,10 +113,13 @@
       if (e.repeat) { return; }
       const sc = G.state.scene;
       if (e.code === 'KeyM' && !e.ctrlKey && !e.altKey && !e.metaKey) {
-        const tag = (document.activeElement && document.activeElement.tagName) || '';
-        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-        U.toggleMic();
-      }
+      const tag = (document.activeElement && document.activeElement.tagName) || '';
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      U.toggleMic();
+    }
+    if (e.code === 'KeyT' && !e.ctrlKey && !e.altKey && !e.metaKey && MP.active && sc === 'play') {
+      U.openChat();
+    }
       if (MP.active && sc === 'play' && /^Digit[1-5]$/.test(e.code)) {
         const idx = parseInt(e.code.slice(5), 10) - 1;
         const others = MP.members.filter(m => m.id !== MP.playerId);
@@ -425,7 +456,7 @@
 
   U.enterMatchUI = function () {
     hide('mpRoomPanel'); hide('mpHubPanel'); hide('mpAuthPanel');
-    show('mpTeamHud'); show('mpVoiceChip');
+    show('mpTeamHud'); show('mpVoiceChip'); show('mpChatHud');
     U.refreshTeamPanel();
     U.renderMicState();
     // rewire the pause-menu quit button for MP
@@ -438,6 +469,8 @@
   U.exitMatchUI = function () {
     hide('mpTeamHud');
     if (!MP.inRoom) hide('mpVoiceChip');
+    hide('mpChatHud');
+    U.closeChat();
     U.hideDowned();
     const sq = $('saveQuitBtn');
     if (sq) { sq.textContent = 'SAVE & QUIT TO MENU'; sq.onclick = () => { STORY.save(); MAIN.toMenu(); UI.toast('Progress saved.', 2500); }; }
@@ -538,6 +571,90 @@
       V.toggleMute();
     }
     U.renderMicState();
+  };
+
+  /* ---------------- text chat + emotes ---------------- */
+
+  U.chat = { open: false, draft: '' };
+
+  function _chatLine(feed, name, text, ts, sys) {
+    if (!feed) return;
+    const row = document.createElement('div');
+    row.className = 'mp-chat-line' + (sys ? ' sys' : '');
+    const t = document.createElement('span');
+    t.className = 'mp-chat-ts';
+    const d = new Date(ts || Date.now());
+    t.textContent = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+    row.appendChild(t);
+    if (!sys && name) {
+      const n = document.createElement('span');
+      n.className = 'mp-chat-name';
+      n.textContent = String(name).slice(0, 18) + ':';
+      row.appendChild(n);
+    }
+    const b = document.createElement('span');
+    b.className = 'mp-chat-text';
+    b.textContent = String(text);          // textContent only — chat text is never parsed as HTML
+    row.appendChild(b);
+    feed.appendChild(row);
+    const cap = feed.id === 'mpChatHud' ? 7 : 60;
+    while (feed.children.length > cap) feed.removeChild(feed.firstChild);
+    feed.scrollTop = feed.scrollHeight;
+    if (feed.id === 'mpChatHud') {
+      setTimeout(() => { row.classList.add('fade'); setTimeout(() => { if (row.parentNode) row.remove(); }, 650); }, 12000);
+    }
+  }
+
+  /** server-relayed message (the echo IS the render — no optimistic duplicates) */
+  U.onChatMessage = function (d) {
+    if (!d || !d.text) return;
+    _chatLine($('mpChatFeed'), d.name, d.text, d.ts, !!d.sys);
+    _chatLine($('mpChatHud'), d.name, d.text, d.ts, !!d.sys);
+  };
+
+  const EMOTE_3RD = { wave: 'waves', point: 'points ahead', yes: 'nods', no: 'shakes their head' };
+  const EMOTE_1ST = { wave: 'You wave.', point: 'You point ahead.', yes: 'You nod.', no: 'You shake your head.' };
+
+  U.onEmote = function (d) {
+    if (!d || !d.emote) return;
+    if (MP.Remote) MP.Remote.playEmote(d.player, d.emote);
+    const mine = d.player === MP.playerId;
+    const who = mine ? null : ((MP.members.find(m => m.id === d.player) || {}).name || 'A survivor');
+    const line = mine ? (EMOTE_1ST[d.emote] || 'You gesture.') : `${who} ${EMOTE_3RD[d.emote] || 'gestures'}.`;
+    _chatLine($('mpChatFeed'), null, line, d.ts || Date.now(), true);
+    _chatLine($('mpChatHud'), null, line, d.ts || Date.now(), true);
+  };
+
+  U.sendChatLine = function (text) {
+    text = String(text || '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+    if (!text) return;
+    MP.Net.sendChat(text, (res) => {
+      if (res && res.ok) return;               // the room-wide echo renders it for everyone, sender included
+      U.sysToast((res && res.error) || 'Message not sent — the link is down.', 3000);
+    });
+  };
+
+  U.openChat = function () {
+    if (U.chat.open || !MP.inRoom) return;
+    if (MP.active && (G.state.scene !== 'play' || MP.Game.iAmDowned || (G.player && G.player.dead))) return;
+    // release any held movement keys so the survivor stands still while typing
+    try {
+      const i = G.input;
+      if (i) { i.forward = i.back = i.left = i.right = i.sprint = false; i.lookLeft = i.lookRight = false; }
+    } catch (e) { /* ignore */ }
+    U.chat.open = true; U.chat.draft = '';
+    show('mpChatBar'); U.renderChatDraft();
+  };
+
+  U.closeChat = function () {
+    if (!U.chat.open) return;
+    U.chat.open = false; U.chat.draft = '';
+    hide('mpChatBar');
+  };
+
+  U.renderChatDraft = function () {
+    const el = $('mpChatDraft');
+    if (el) el.textContent = U.chat.draft || '';
   };
 
   /* ---------------- downed overlay ---------------- */
